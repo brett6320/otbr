@@ -65,16 +65,19 @@ Current release: <!-- version:start -->**`0.1.0`**<!-- version:end -->
 # latest stable (default branch HEAD)
 docker pull ghcr.io/brett6320/otbr:latest
 
-# pin to the current release
-docker pull ghcr.io/brett6320/otbr:<!-- pull-version:start -->0.1.0<!-- pull-version:end -->
+# pin to a specific release
+docker pull ghcr.io/brett6320/otbr:X.Y.Z
 
-# also available: major / minor channels, and per-commit
-docker pull ghcr.io/brett6320/otbr:<!-- pull-minor:start -->0.1<!-- pull-minor:end -->
-docker pull ghcr.io/brett6320/otbr:<!-- pull-major:start -->0<!-- pull-major:end -->
-docker pull ghcr.io/brett6320/otbr:sha-<short-sha>
+# major / minor channels (auto-follow the newest matching release)
+docker pull ghcr.io/brett6320/otbr:X.Y
+docker pull ghcr.io/brett6320/otbr:X
+
+# per-commit (from a /build run on a PR)
+docker pull ghcr.io/brett6320/otbr:sha-<short>
+docker pull ghcr.io/brett6320/otbr:pr-<num>
 ```
 
-These version markers are rewritten by `.github/workflows/release.yml` on every release so the README always reflects the published tag.
+The "Current release" line above is updated by `.github/workflows/release.yml` on every release so the README always reflects the published tag.
 
 ## Configuration
 

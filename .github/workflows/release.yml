@@ -54,20 +54,16 @@ jobs:
             exit 1
           fi
 
-      - name: Update README version markers
+      - name: Update README version marker
         env:
           NEXT: ${{ steps.ver.outputs.next }}
         run: |
           set -euo pipefail
-          IFS='.' read -r MAJOR MINOR _ <<< "$NEXT"
-          MINOR_TAG="${MAJOR}.${MINOR}"
-          # Each marker pair: <!-- name:start -->TEXT<!-- name:end -->
-          # sed swaps TEXT in-place. Order matters only insofar as patterns are distinct.
+          # The single marker pair lives outside any code block (HTML comments
+          # don't get hidden inside fenced ``` blocks), so only this one is
+          # safe to rewrite. Example tags inside the code block stay generic.
           sed -i -E \
             -e "s|(<!-- version:start -->)\*\*\`[^\`]*\`\*\*(<!-- version:end -->)|\1**\`${NEXT}\`**\2|" \
-            -e "s|(<!-- pull-version:start -->)[^<]*(<!-- pull-version:end -->)|\1${NEXT}\2|" \
-            -e "s|(<!-- pull-minor:start -->)[^<]*(<!-- pull-minor:end -->)|\1${MINOR_TAG}\2|" \
-            -e "s|(<!-- pull-major:start -->)[^<]*(<!-- pull-major:end -->)|\1${MAJOR}\2|" \
             README.md
 
       - name: Write VERSION, commit, tag, push
