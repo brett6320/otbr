@@ -21,6 +21,8 @@ set -euo pipefail
 log() { printf '[entrypoint] %s\n' "$*" >&2; }
 die() { printf '[entrypoint][FATAL] %s\n' "$*" >&2; exit 1; }
 
+log "otbr image version=${IMAGE_VERSION:-unknown} revision=${IMAGE_REVISION:-unknown}"
+
 # ---- Sanity: radio device ----------------------------------------------------
 case "${RADIO_URL}" in
     *forkpty*|spinel+spi*|trel://*|"")
