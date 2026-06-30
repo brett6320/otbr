@@ -91,8 +91,8 @@ AGENT_ARGS=(
     "${RADIO_URL}"
 )
 
-log "Starting otbr-agent --rest ${AGENT_ARGS[*]}"
-otbr-agent --rest "${AGENT_ARGS[@]}" &
+log "Starting otbr-agent ${AGENT_ARGS[*]}"
+otbr-agent "${AGENT_ARGS[@]}" &
 AGENT_PID=$!
 
 # ---- Optionally launch otbr-web ---------------------------------------------

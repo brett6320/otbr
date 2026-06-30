@@ -26,6 +26,8 @@ docker compose up -d
 docker compose logs -f otbr
 ```
 
+To run from the published GHCR image instead of building locally, copy [`docker-compose.sample.yaml`](./docker-compose.sample.yaml) to `docker-compose.yaml` and create a `.env` file using the sample below.
+
 Web UI: `http://<host>/`  •  REST API: `http://<host>:8081/`
 
 ## REST API examples
@@ -55,13 +57,24 @@ Full schema: [`src/rest/openapi.yaml`](https://github.com/openthread/ot-br-posix
 
 ## Pulling from GHCR
 
-Built and pushed by `.github/workflows/build.yml` on every push to `main` and on semver tags.
+Built and pushed by `.github/workflows/build.yml` on every push to `main` and on `v*` semver tags. Image: `ghcr.io/brett6320/otbr`.
+
+Current release: <!-- version:start -->**`0.1.0`**<!-- version:end -->
 
 ```bash
-docker pull ghcr.io/OWNER/REPO:latest
-docker pull ghcr.io/OWNER/REPO:v1.2.3
-docker pull ghcr.io/OWNER/REPO:sha-<short-sha>
+# latest stable (default branch HEAD)
+docker pull ghcr.io/brett6320/otbr:latest
+
+# pin to the current release
+docker pull ghcr.io/brett6320/otbr:<!-- pull-version:start -->0.1.0<!-- pull-version:end -->
+
+# also available: major / minor channels, and per-commit
+docker pull ghcr.io/brett6320/otbr:<!-- pull-minor:start -->0.1<!-- pull-minor:end -->
+docker pull ghcr.io/brett6320/otbr:<!-- pull-major:start -->0<!-- pull-major:end -->
+docker pull ghcr.io/brett6320/otbr:sha-<short-sha>
 ```
+
+These version markers are rewritten by `.github/workflows/release.yml` on every release so the README always reflects the published tag.
 
 ## Configuration
 
@@ -78,6 +91,34 @@ docker pull ghcr.io/OWNER/REPO:sha-<short-sha>
 | `WEB_PORT` | `80` | Web GUI port. |
 
 Feature flags `REST_API`, `WEB_GUI`, `NAT64`, `DNS64`, `BACKBONE_ROUTER`, `BORDER_ROUTING`, `FIREWALL` are **compile-time** `--build-arg` values — rebuild to change them.
+
+### Sample env vars
+
+Drop this into a `.env` file next to your compose file, or pass through `docker run -e ...`. Tweak the interface and radio device for your host.
+
+```dotenv
+# Host-side infrastructure interface (must exist on the host with --network=host).
+INFRA_IF_NAME=eth0
+BACKBONE_INTERFACE=eth0
+
+# Thread RCP device. Most USB dongles enumerate as ttyACM0; Silabs/FTDI parts
+# as ttyUSB0. Use a stable /dev/serial/by-id/... path if multiple are attached.
+RADIO_URL=spinel+hdlc+uart:///dev/ttyACM0
+
+# Optional: Thread Radio Encapsulation Link (leave empty unless you know you need it).
+TREL_URL=
+
+# Thread TUN interface — exposed inside the container; rarely needs changing.
+TUN_INTERFACE_NAME=wpan0
+
+# Logging verbosity (0=emerg .. 7=debug).
+DEBUG_LEVEL=7
+
+# Service ports.
+REST_PORT=8081
+WEB_PORT=80
+WEB_GUI=1
+```
 
 ## Versioning
 

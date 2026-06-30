@@ -54,6 +54,22 @@ jobs:
             exit 1
           fi
 
+      - name: Update README version markers
+        env:
+          NEXT: ${{ steps.ver.outputs.next }}
+        run: |
+          set -euo pipefail
+          IFS='.' read -r MAJOR MINOR _ <<< "$NEXT"
+          MINOR_TAG="${MAJOR}.${MINOR}"
+          # Each marker pair: <!-- name:start -->TEXT<!-- name:end -->
+          # sed swaps TEXT in-place. Order matters only insofar as patterns are distinct.
+          sed -i -E \
+            -e "s|(<!-- version:start -->)\*\*\`[^\`]*\`\*\*(<!-- version:end -->)|\1**\`${NEXT}\`**\2|" \
+            -e "s|(<!-- pull-version:start -->)[^<]*(<!-- pull-version:end -->)|\1${NEXT}\2|" \
+            -e "s|(<!-- pull-minor:start -->)[^<]*(<!-- pull-minor:end -->)|\1${MINOR_TAG}\2|" \
+            -e "s|(<!-- pull-major:start -->)[^<]*(<!-- pull-major:end -->)|\1${MAJOR}\2|" \
+            README.md
+
       - name: Write VERSION, commit, tag, push
         env:
           NEXT: ${{ steps.ver.outputs.next }}
@@ -63,7 +79,7 @@ jobs:
           echo "$NEXT" > VERSION
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add VERSION
+          git add VERSION README.md
           git commit -m "Release $TAG"
           git tag -a "$TAG" -m "Release $TAG"
           git push origin HEAD:${{ github.ref_name }}
@@ -73,5 +89,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
-          name: ${{ steps.ver.outputs.tag }}
+          name: "Release ${{ steps.ver.outputs.tag }}"
+          body: |
+            Container image published to GHCR for this release:
+
+            ```
+            docker pull ghcr.io/${{ github.repository }}:${{ steps.ver.outputs.next }}
+            ```
+
+            See `.github/workflows/build.yml` for the full tag matrix (`X.Y.Z`, `X.Y`, `X`, `latest`, `sha-<short>`).
           generate_release_notes: true
