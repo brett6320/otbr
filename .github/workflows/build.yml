@@ -35,6 +35,7 @@ jobs:
       contents: read
       packages: write
       pull-requests: write
+      checks: write
     steps:
       - name: React to the trigger comment (rocket)
         uses: actions/github-script@v7
@@ -60,6 +61,30 @@ jobs:
             core.setOutput('sha', pr.data.head.sha);
             core.setOutput('short_sha', pr.data.head.sha.substring(0, 7));
             core.setOutput('number', context.payload.issue.number);
+
+      # Surface this run in the PR's "Checks" tab and conversation timeline.
+      # issue_comment-triggered runs are otherwise invisible to the PR
+      # because they aren't tied to the PR's head commit by default.
+      - name: Open check run on PR head
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const res = await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'pr-build (/build)',
+              head_sha: '${{ steps.pr.outputs.sha }}',
+              status: 'in_progress',
+              started_at: new Date().toISOString(),
+              details_url: runUrl,
+              output: {
+                title: 'Building multi-arch image',
+                summary: `Triggered by \`/build\` comment on #${{ steps.pr.outputs.number }}.\n\n[Workflow run](${runUrl})`,
+              },
+            });
+            core.setOutput('id', res.data.id);
 
       # Check out the PR head. refs/pull/<n>/head is simple and robust
       # for same-repo PRs. github-script above already resolved the
@@ -122,6 +147,32 @@ jobs:
             - `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ steps.pr.outputs.number }}`
 
             On merge to `main`, `sha-${{ steps.pr.outputs.short_sha }}` will be retagged as `:latest`.
+
+      # Runs on success AND failure — reports final state back to the check run.
+      - name: Close check run
+        if: always() && steps.check.outputs.id != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const id = Number('${{ steps.check.outputs.id }}');
+            const status = '${{ job.status }}'.toLowerCase();
+            const conclusion = status === 'success' ? 'success'
+                             : status === 'cancelled' ? 'cancelled'
+                             : 'failure';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.checks.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              check_run_id: id,
+              status: 'completed',
+              conclusion,
+              completed_at: new Date().toISOString(),
+              details_url: runUrl,
+              output: {
+                title: conclusion === 'success' ? 'Built and pushed' : `Build ${conclusion}`,
+                summary: `[Workflow run](${runUrl})`,
+              },
+            });
 
   # -------------------------------------------------------------------
   # Retag on merge — no rebuild. Use buildx imagetools to retag the
