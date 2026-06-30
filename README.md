@@ -108,6 +108,18 @@ BACKBONE_INTERFACE=eth0
 # as ttyUSB0. Use a stable /dev/serial/by-id/... path if multiple are attached.
 RADIO_URL=spinel+hdlc+uart:///dev/ttyACM0
 
+# Alternative — RCP that needs non-default UART settings (e.g. Silabs EFR32
+# stock firmware at 460800 baud with HW flow control off). The path here is
+# the IN-CONTAINER device name; map the host device to it in compose, e.g.
+#   devices: ["/dev/ttyUSB0:/dev/ttyUSB-otbr"]
+# No host udev rule is needed for the rename — Docker does that.
+# Query-string options (see openthread/ot-br-posix Spinel docs):
+#   uart-baudrate=N         baud rate                       (default 115200)
+#   uart-flow-control=0|1   hardware (RTS/CTS) flow control (default 1)
+#   uart-init-rate=N        initial probe baud before switching to uart-baudrate
+#   uart-reset=0|1          toggle DTR on open to reset the RCP (default 0)
+# RADIO_URL=spinel+hdlc+uart:///dev/ttyUSB-otbr?uart-baudrate=460800&uart-flow-control=0
+
 # Optional: Thread Radio Encapsulation Link (leave empty unless you know you need it).
 TREL_URL=
 
