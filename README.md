@@ -55,13 +55,24 @@ Full schema: [`src/rest/openapi.yaml`](https://github.com/openthread/ot-br-posix
 
 ## Pulling from GHCR
 
-Built and pushed by `.github/workflows/build.yml` on every push to `main` and on semver tags.
+Built and pushed by `.github/workflows/build.yml` on every push to `main` and on `v*` semver tags. Image: `ghcr.io/brett6320/otbr`.
+
+Current release: <!-- version:start -->**`0.1.0`**<!-- version:end -->
 
 ```bash
-docker pull ghcr.io/OWNER/REPO:latest
-docker pull ghcr.io/OWNER/REPO:v1.2.3
-docker pull ghcr.io/OWNER/REPO:sha-<short-sha>
+# latest stable (default branch HEAD)
+docker pull ghcr.io/brett6320/otbr:latest
+
+# pin to the current release
+docker pull ghcr.io/brett6320/otbr:<!-- pull-version:start -->0.1.0<!-- pull-version:end -->
+
+# also available: major / minor channels, and per-commit
+docker pull ghcr.io/brett6320/otbr:<!-- pull-minor:start -->0.1<!-- pull-minor:end -->
+docker pull ghcr.io/brett6320/otbr:<!-- pull-major:start -->0<!-- pull-major:end -->
+docker pull ghcr.io/brett6320/otbr:sha-<short-sha>
 ```
+
+These version markers are rewritten by `.github/workflows/release.yml` on every release so the README always reflects the published tag.
 
 ## Configuration
 
