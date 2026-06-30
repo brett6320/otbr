@@ -1,0 +1,41 @@
+# docker-compose.yml — local development for OpenThread Border Router (OTBR)
+#
+# Usage:
+#   docker compose up --build
+#   # then hit the embedded REST API (otbr-agent, port 8081):
+#   #   curl http://localhost:8081/node
+#   #   curl http://localhost:8081/node/state
+#
+# Notes:
+# - network_mode: host is the simplest path for a Backbone Router: direct
+#   access to the infra link for mDNS/ND/RA. Tradeoff: no port isolation,
+#   container shares host's network namespace; 'ports:' is ignored.
+# - privileged: true because BACKBONE_ROUTER builds twiddle sysctls and
+#   iptables/nft rules at runtime. Tighter alt: cap_add NET_ADMIN+SYS_ADMIN.
+
+services:
+  otbr:
+    container_name: otbr
+    build:
+      context: .
+      dockerfile: Dockerfile
+    privileged: true
+    network_mode: host
+    restart: unless-stopped
+    devices:
+      - "/dev/ttyACM0:/dev/ttyACM0"
+      # Alt for Silabs/FTDI USB-serial RCPs:
+      # - "/dev/ttyUSB0:/dev/ttyUSB0"
+      - "/dev/net/tun:/dev/net/tun"
+    volumes:
+      - thread-data:/var/lib/thread
+    environment:
+      INFRA_IF_NAME: "eth0"
+      RADIO_URL: "spinel+hdlc+uart:///dev/ttyACM0"
+      # TUN_INTERFACE_NAME: "wpan0"
+      # BACKBONE_INTERFACE: "eth0"
+      # DEBUG_LEVEL: "7"
+
+volumes:
+  thread-data:
+    driver: local

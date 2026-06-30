@@ -1,0 +1,35 @@
+# VCS
+.git
+.gitignore
+.gitattributes
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# CI / docs
+.github
+README.md
+LICENSE
+*.md
+
+# Editor / OS
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Logs / tmp
+*.log
+logs
+tmp
+temp
