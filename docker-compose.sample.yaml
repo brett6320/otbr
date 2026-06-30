@@ -1,0 +1,67 @@
+# docker-compose.sample.yaml
+#
+# Annotated template for running OTBR from the published GHCR image.
+# Copy this to docker-compose.yaml (or use directly via `-f`), drop a `.env`
+# file alongside it (see README "Sample env vars"), and:
+#
+#   docker compose -f docker-compose.sample.yaml up -d
+#   curl http://localhost:8081/node
+#
+# This file differs from the in-repo docker-compose.yml in two ways:
+#   1. It pulls the published image from GHCR instead of building locally.
+#   2. It reads runtime config from .env so you don't have to edit YAML.
+
+services:
+  otbr:
+    container_name: otbr
+    image: ghcr.io/brett6320/otbr:latest
+    # Pin to a specific release for reproducible deploys:
+    # image: ghcr.io/brett6320/otbr:0.1.0
+
+    # Privileged is the path of least resistance for BACKBONE_ROUTER builds
+    # because they twiddle sysctls and ip6tables at runtime. Tighter alternative:
+    #   privileged: false
+    #   cap_add: [NET_ADMIN, SYS_ADMIN]
+    #   sysctls:
+    #     net.ipv6.conf.all.forwarding: 1
+    #     net.ipv4.conf.all.forwarding: 1
+    privileged: true
+
+    # Host networking is required for mDNS + IPv6 ND on the infra link.
+    # Bridge mode breaks Backbone Router; do not change this unless you
+    # know what you're giving up.
+    network_mode: host
+
+    restart: unless-stopped
+
+    devices:
+      # RCP radio. Match the device path to RADIO_URL in .env.
+      - "/dev/ttyACM0:/dev/ttyACM0"
+      # Silabs / FTDI alternative — uncomment if your RCP enumerates as ttyUSB*.
+      # - "/dev/ttyUSB0:/dev/ttyUSB0"
+      # Stable by-id path is more robust when multiple USB devices are present:
+      # - "/dev/serial/by-id/usb-Nordic_Semiconductor_nRF52840_Dongle-if00:/dev/ttyACM0"
+
+      # Thread TUN device for the wpan0 interface.
+      - "/dev/net/tun:/dev/net/tun"
+
+    volumes:
+      # Persist Thread credentials, dataset, and otbr state across restarts.
+      - thread-data:/var/lib/thread
+      # Mount the image's own /data volume too if you want host-visible state:
+      # - ./otbr-data:/data
+
+    # Pull all the runtime knobs from .env so you don't have to edit this file.
+    env_file:
+      - .env
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "4", "http://127.0.0.1:8081/node"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+
+volumes:
+  thread-data:
+    driver: local

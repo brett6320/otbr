@@ -26,6 +26,8 @@ docker compose up -d
 docker compose logs -f otbr
 ```
 
+To run from the published GHCR image instead of building locally, copy [`docker-compose.sample.yaml`](./docker-compose.sample.yaml) to `docker-compose.yaml` and create a `.env` file using the sample below.
+
 Web UI: `http://<host>/`  •  REST API: `http://<host>:8081/`
 
 ## REST API examples
@@ -78,6 +80,34 @@ docker pull ghcr.io/OWNER/REPO:sha-<short-sha>
 | `WEB_PORT` | `80` | Web GUI port. |
 
 Feature flags `REST_API`, `WEB_GUI`, `NAT64`, `DNS64`, `BACKBONE_ROUTER`, `BORDER_ROUTING`, `FIREWALL` are **compile-time** `--build-arg` values — rebuild to change them.
+
+### Sample env vars
+
+Drop this into a `.env` file next to your compose file, or pass through `docker run -e ...`. Tweak the interface and radio device for your host.
+
+```dotenv
+# Host-side infrastructure interface (must exist on the host with --network=host).
+INFRA_IF_NAME=eth0
+BACKBONE_INTERFACE=eth0
+
+# Thread RCP device. Most USB dongles enumerate as ttyACM0; Silabs/FTDI parts
+# as ttyUSB0. Use a stable /dev/serial/by-id/... path if multiple are attached.
+RADIO_URL=spinel+hdlc+uart:///dev/ttyACM0
+
+# Optional: Thread Radio Encapsulation Link (leave empty unless you know you need it).
+TREL_URL=
+
+# Thread TUN interface — exposed inside the container; rarely needs changing.
+TUN_INTERFACE_NAME=wpan0
+
+# Logging verbosity (0=emerg .. 7=debug).
+DEBUG_LEVEL=7
+
+# Service ports.
+REST_PORT=8081
+WEB_PORT=80
+WEB_GUI=1
+```
 
 ## Versioning
 
