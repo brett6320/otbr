@@ -80,6 +80,21 @@ WORKDIR /app/ot-br-posix
 RUN ./script/bootstrap \
  && ./script/setup
 
+# ---- Post-install cleanup (low-risk leaning) -----------------------------
+# script/bootstrap installs a large set of build-time apt deps (cmake,
+# ninja, build-essential, *-dev headers, ...) and ./script/setup leaves the
+# full source tree + cloned submodule .git dirs behind. Once the otbr-agent
+# / otbr-web binaries are installed under /usr/local, none of that is
+# needed at runtime. We don't apt-get autoremove here because the installed
+# binaries link against runtime libs that share names with build-time
+# packages and a blanket autoremove is risky — that's the multi-stage win.
+RUN set -eux; \
+    cd /; \
+    rm -rf /app/ot-br-posix; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb /tmp/* /var/tmp/* /root/.cache; \
+    apt-get clean
+WORKDIR /app
+
 # ---- Runtime environment defaults ----------------------------------------
 ENV INFRA_IF_NAME=eth0 \
     BACKBONE_INTERFACE=eth0 \
