@@ -6,7 +6,7 @@ Containerized [OpenThread Border Router](https://openthread.io/guides/border-rou
 
 - OTBR (`otbr-agent` + `otbr-web`) running in a single container.
 - Built with `REST_API=1` so the JSON REST server inside `otbr-agent` is exposed on TCP **8081** alongside the web UI on port **80**.
-- Multi-arch image published to `ghcr.io/OWNER/REPO`.
+- Multi-arch image published to `ghcr.io/brett6320/otbr`.
 
 ## Host requirements
 
