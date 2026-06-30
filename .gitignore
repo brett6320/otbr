@@ -1,0 +1,25 @@
+# Claude Code artifacts
+.claude/
+.claude.json
+CLAUDE.local.md
+.aider*
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Logs / tmp
+*.log
+logs/
+tmp/
+temp/
