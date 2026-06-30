@@ -1,75 +1,222 @@
 name: build
 
 on:
+  # Build on tagged releases (vX.Y.Z) — full semver matrix + latest
   push:
-    branches: [main]
-    tags: ['v*']
+    tags:
+      - 'v*'
+
+  # PR builds are opt-in: comment "/build" on a PR to trigger.
+  issue_comment:
+    types: [created]
+
+  # On PR merge to main, retag the PR's last-built image as :latest.
+  # No rebuild — uses buildx imagetools to retag the multi-arch manifest.
   pull_request:
+    types: [closed]
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build:
+  # -------------------------------------------------------------------
+  # PR build — triggered by a "/build" comment on a PR.
+  # Pushes multi-arch image tagged with sha-<short> and pr-<num>.
+  # -------------------------------------------------------------------
+  pr-build:
+    name: Build PR image (on /build comment)
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request != null &&
+      startsWith(github.event.comment.body, '/build')
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
+      pull-requests: write
     steps:
-      - name: Checkout
+      - name: React to the trigger comment (rocket)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'rocket',
+            });
+
+      - name: Resolve PR head SHA
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.issue.number,
+            });
+            core.setOutput('sha', pr.data.head.sha);
+            core.setOutput('short_sha', pr.data.head.sha.substring(0, 7));
+            core.setOutput('number', context.payload.issue.number);
+
+      # Check out the PR head. refs/pull/<n>/head is simple and robust
+      # for same-repo PRs. github-script above already resolved the
+      # exact SHA for tagging and for the merge-retag job.
+      - name: Checkout PR head
         uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ steps.pr.outputs.number }}/head
+          fetch-depth: 0
 
       - name: Read VERSION
-        id: ver
-        run: |
-          v=$(tr -d '[:space:]' < VERSION)
-          echo "version=$v" >> "$GITHUB_OUTPUT"
+        id: version
+        run: echo "value=$(cat VERSION)" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
 
-      - name: Set up Docker Buildx
+      - name: Set up Buildx
         uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
+      - name: Compute metadata
         id: meta
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=${{ steps.ver.outputs.version }}-dev.{{sha}},enable={{is_default_branch}}
-            type=sha,format=short
+            type=raw,value=sha-${{ steps.pr.outputs.short_sha }}
+            type=raw,value=pr-${{ steps.pr.outputs.number }}
           labels: |
-            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.version.outputs.value }}
+            org.opencontainers.image.revision=${{ steps.pr.outputs.sha }}
 
-      - name: Build and push
-        id: build
+      - name: Build and push (multi-arch)
         uses: docker/build-push-action@v7
         with:
           context: .
-          build-args: |
-            IMAGE_VERSION=${{ steps.ver.outputs.version }}
-            IMAGE_REVISION=${{ github.sha }}
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          annotations: ${{ steps.meta.outputs.annotations }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          build-args: |
+            IMAGE_VERSION=${{ steps.version.outputs.value }}
+            IMAGE_REVISION=${{ steps.pr.outputs.sha }}
+
+      - name: Reply with image tag
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ steps.pr.outputs.number }}
+          body: |
+            Built and pushed:
+
+            - `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ steps.pr.outputs.short_sha }}`
+            - `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ steps.pr.outputs.number }}`
+
+            On merge to `main`, `sha-${{ steps.pr.outputs.short_sha }}` will be retagged as `:latest`.
+
+  # -------------------------------------------------------------------
+  # Retag on merge — no rebuild. Use buildx imagetools to retag the
+  # multi-arch manifest pushed by the PR build to :latest.
+  # -------------------------------------------------------------------
+  retag-latest:
+    name: Retag PR image as :latest on merge
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute short SHA
+        id: sha
+        env:
+          GITHUB_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: echo "short=${GITHUB_HEAD_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+      - name: Retag multi-arch manifest as :latest
+        run: |
+          IMG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          docker buildx imagetools create \
+            --tag "$IMG:latest" \
+            "$IMG:sha-${{ steps.sha.outputs.short }}"
+
+  # -------------------------------------------------------------------
+  # Tagged release build — full semver matrix + latest.
+  # -------------------------------------------------------------------
+  tag-build:
+    name: Build and push tagged release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read VERSION
+        id: version
+        run: echo "value=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.version=${{ steps.version.outputs.value }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Build and push (multi-arch)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            IMAGE_VERSION=${{ steps.version.outputs.value }}
+            IMAGE_REVISION=${{ github.sha }}
