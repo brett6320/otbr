@@ -79,6 +79,19 @@ docker pull ghcr.io/OWNER/REPO:sha-<short-sha>
 
 Feature flags `REST_API`, `WEB_GUI`, `NAT64`, `DNS64`, `BACKBONE_ROUTER`, `BORDER_ROUTING`, `FIREWALL` are **compile-time** `--build-arg` values — rebuild to change them.
 
+## Versioning
+
+Single source of truth: the [`VERSION`](./VERSION) file (semver `MAJOR.MINOR.PATCH`).
+
+To cut a release, trigger the **release** workflow from the Actions tab (or `gh workflow run release.yml -f bump=minor`). It defaults to a **minor** bump; pick `major` or `patch` to override. The workflow:
+
+1. Bumps `VERSION` and commits to `main`.
+2. Tags `vX.Y.Z` and pushes the tag.
+3. Creates a GitHub Release with auto-generated notes.
+4. The **build** workflow fires on the `v*` tag and publishes `ghcr.io/brett6320/otbr:{X.Y.Z, X.Y, X, latest}` (multi-arch).
+
+Every image carries `org.opencontainers.image.version` and exposes `IMAGE_VERSION` / `IMAGE_REVISION` as env vars; `main` branch builds get an extra `X.Y.Z-dev.<sha>` tag.
+
 ## License
 
 OpenThread components are BSD-3-Clause (upstream). Glue here is MIT.

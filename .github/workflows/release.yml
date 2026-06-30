@@ -1,0 +1,77 @@
+name: release
+
+# Bumps VERSION and pushes a vX.Y.Z tag. The build.yml workflow listens for
+# `v*` tag pushes and publishes the multi-arch image to GHCR.
+#
+# Defaults to a MINOR bump. Trigger manually from the Actions tab (or via
+# `gh workflow run release.yml`) and pick `major` / `patch` to override.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        default: 'minor'
+        type: choice
+        options: [major, minor, patch]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute next version
+        id: ver
+        run: |
+          set -euo pipefail
+          current=$(tr -d '[:space:]' < VERSION)
+          IFS='.' read -r major minor patch <<< "$current"
+          case "${{ inputs.bump }}" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+            *) echo "unknown bump: ${{ inputs.bump }}" >&2; exit 1 ;;
+          esac
+          next="${major}.${minor}.${patch}"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "next=$next"       >> "$GITHUB_OUTPUT"
+          echo "tag=v$next"       >> "$GITHUB_OUTPUT"
+          echo "Bumping $current -> $next (${{ inputs.bump }})"
+
+      - name: Guard against duplicate tag
+        run: |
+          if git rev-parse "refs/tags/${{ steps.ver.outputs.tag }}" >/dev/null 2>&1; then
+            echo "Tag ${{ steps.ver.outputs.tag }} already exists" >&2
+            exit 1
+          fi
+
+      - name: Write VERSION, commit, tag, push
+        env:
+          NEXT: ${{ steps.ver.outputs.next }}
+          TAG:  ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          echo "$NEXT" > VERSION
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add VERSION
+          git commit -m "Release $TAG"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin HEAD:${{ github.ref_name }}
+          git push origin "$TAG"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          generate_release_notes: true

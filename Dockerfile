@@ -14,6 +14,17 @@ FROM ubuntu:24.04
 ARG OTBR_REPO=https://github.com/openthread/ot-br-posix.git
 ARG OTBR_REF=main
 
+# Image version (read from ./VERSION by CI; default "dev" for local builds).
+ARG IMAGE_VERSION=dev
+ARG IMAGE_REVISION=local
+LABEL org.opencontainers.image.title="otbr" \
+      org.opencontainers.image.description="OpenThread Border Router with REST API" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.revision="${IMAGE_REVISION}" \
+      org.opencontainers.image.source="https://github.com/brett6320/otbr"
+ENV IMAGE_VERSION=${IMAGE_VERSION} \
+    IMAGE_REVISION=${IMAGE_REVISION}
+
 # Feature flags consumed by ot-br-posix's script/bootstrap + script/setup.
 ARG REST_API=1
 ARG WEB_GUI=1
