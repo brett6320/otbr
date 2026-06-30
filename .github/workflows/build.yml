@@ -21,11 +21,11 @@ env:
 
 jobs:
   # -------------------------------------------------------------------
-  # PR build — triggered by a "/build" comment on a PR.
-  # Pushes multi-arch image tagged with sha-<short> and pr-<num>.
+  # PR build coordinator — reacts to /build, opens a check run, resolves
+  # the PR head SHA, then fans out to the per-platform builders.
   # -------------------------------------------------------------------
-  pr-build:
-    name: Build PR image (on /build comment)
+  pr-build-setup:
+    name: PR /build setup
     if: >-
       github.event_name == 'issue_comment' &&
       github.event.issue.pull_request != null &&
@@ -33,12 +33,16 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
       pull-requests: write
       checks: write
+    outputs:
+      sha: ${{ steps.pr.outputs.sha }}
+      short_sha: ${{ steps.pr.outputs.short_sha }}
+      number: ${{ steps.pr.outputs.number }}
+      check_id: ${{ steps.check.outputs.id }}
     steps:
       - name: React to the trigger comment (rocket)
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             await github.rest.reactions.createForIssueComment({
@@ -50,7 +54,7 @@ jobs:
 
       - name: Resolve PR head SHA
         id: pr
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const pr = await github.rest.pulls.get({
@@ -63,11 +67,10 @@ jobs:
             core.setOutput('number', context.payload.issue.number);
 
       # Surface this run in the PR's "Checks" tab and conversation timeline.
-      # issue_comment-triggered runs are otherwise invisible to the PR
-      # because they aren't tied to the PR's head commit by default.
+      # issue_comment-triggered runs are otherwise invisible to the PR.
       - name: Open check run on PR head
         id: check
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
@@ -86,21 +89,106 @@ jobs:
             });
             core.setOutput('id', res.data.id);
 
-      # Check out the PR head. refs/pull/<n>/head is simple and robust
-      # for same-repo PRs. github-script above already resolved the
-      # exact SHA for tagging and for the merge-retag job.
+  # -------------------------------------------------------------------
+  # Per-platform builders for PR /build. Each runs on a NATIVE runner
+  # (amd64 on ubuntu-latest, arm64 on ubuntu-24.04-arm). No QEMU.
+  # Pushes by digest only; the merge job below assembles the manifest.
+  # -------------------------------------------------------------------
+  pr-build:
+    name: pr-build ${{ matrix.platform }}
+    needs: pr-build-setup
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Prepare platform tag
+        id: plat
+        run: |
+          p="${{ matrix.platform }}"
+          echo "pair=${p//\//-}" >> "$GITHUB_OUTPUT"
+
       - name: Checkout PR head
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
-          ref: refs/pull/${{ steps.pr.outputs.number }}/head
+          ref: refs/pull/${{ needs.pr-build-setup.outputs.number }}/head
           fetch-depth: 0
 
       - name: Read VERSION
         id: version
         run: echo "value=$(cat VERSION)" >> "$GITHUB_OUTPUT"
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.version.outputs.value }}
+            org.opencontainers.image.revision=${{ needs.pr-build-setup.outputs.sha }}
+          build-args: |
+            IMAGE_VERSION=${{ steps.version.outputs.value }}
+            IMAGE_REVISION=${{ needs.pr-build-setup.outputs.sha }}
+          # Push only the manifest digest; the merge job names the tags.
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          # Per-platform gha cache scope so amd64 and arm64 don't fight.
+          cache-from: type=gha,scope=pr-build-${{ steps.plat.outputs.pair }}
+          cache-to:   type=gha,scope=pr-build-${{ steps.plat.outputs.pair }},mode=max
+
+      - name: Export digest
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-digests-${{ steps.plat.outputs.pair }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # -------------------------------------------------------------------
+  # Merge per-platform digests into a multi-arch manifest with the
+  # sha-<short> and pr-<num> tags. Then comment back on the PR and close
+  # the check run.
+  # -------------------------------------------------------------------
+  pr-build-merge:
+    name: pr-build merge & tag
+    needs: [pr-build-setup, pr-build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: write
+      checks: write
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: pr-digests-*
+          merge-multiple: true
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v4
@@ -118,65 +206,67 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=sha-${{ steps.pr.outputs.short_sha }}
-            type=raw,value=pr-${{ steps.pr.outputs.number }}
-          labels: |
-            org.opencontainers.image.version=${{ steps.version.outputs.value }}
-            org.opencontainers.image.revision=${{ steps.pr.outputs.sha }}
+            type=raw,value=sha-${{ needs.pr-build-setup.outputs.short_sha }}
+            type=raw,value=pr-${{ needs.pr-build-setup.outputs.number }}
 
-      - name: Build and push (multi-arch)
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            IMAGE_VERSION=${{ steps.version.outputs.value }}
-            IMAGE_REVISION=${{ steps.pr.outputs.sha }}
+      - name: Create multi-arch manifest
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          set -euo pipefail
+          IMG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          # Build the tag args list from metadata-action's output.
+          tags=()
+          while IFS= read -r t; do
+            [[ -n "$t" ]] && tags+=( "-t" "$t" )
+          done <<< "${{ steps.meta.outputs.tags }}"
+          # Build the source list (one digest reference per platform).
+          srcs=()
+          for d in *; do
+            srcs+=( "$IMG@sha256:$d" )
+          done
+          docker buildx imagetools create "${tags[@]}" "${srcs[@]}"
 
       - name: Reply with image tag
-        uses: peter-evans/create-or-update-comment@v4
+        uses: peter-evans/create-or-update-comment@v5
         with:
-          issue-number: ${{ steps.pr.outputs.number }}
+          issue-number: ${{ needs.pr-build-setup.outputs.number }}
           body: |
-            Built and pushed:
+            Built and pushed (multi-arch, native runners):
 
-            - `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ steps.pr.outputs.short_sha }}`
-            - `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ steps.pr.outputs.number }}`
+            - `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ needs.pr-build-setup.outputs.short_sha }}`
+            - `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ needs.pr-build-setup.outputs.number }}`
 
-            On merge to `main`, `sha-${{ steps.pr.outputs.short_sha }}` will be retagged as `:latest`.
+            On merge to `main`, `sha-${{ needs.pr-build-setup.outputs.short_sha }}` will be retagged as `:latest` and the current `VERSION` tags.
 
-      # Runs on success AND failure — reports final state back to the check run.
       - name: Close check run
-        if: always() && steps.check.outputs.id != ''
-        uses: actions/github-script@v7
+        if: always() && needs.pr-build-setup.outputs.check_id != ''
+        uses: actions/github-script@v9
         with:
           script: |
-            const id = Number('${{ steps.check.outputs.id }}');
-            const status = '${{ job.status }}'.toLowerCase();
-            const conclusion = status === 'success' ? 'success'
-                             : status === 'cancelled' ? 'cancelled'
-                             : 'failure';
+            const id = Number('${{ needs.pr-build-setup.outputs.check_id }}');
+            // Roll up status: this job ran, but we also care if any matrix builder failed.
+            const buildStatus = '${{ needs.pr-build.result }}'.toLowerCase();
+            const status = buildStatus === 'success' ? 'success'
+                         : buildStatus === 'cancelled' ? 'cancelled'
+                         : 'failure';
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             await github.rest.checks.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
               check_run_id: id,
               status: 'completed',
-              conclusion,
+              conclusion: status,
               completed_at: new Date().toISOString(),
               details_url: runUrl,
               output: {
-                title: conclusion === 'success' ? 'Built and pushed' : `Build ${conclusion}`,
+                title: status === 'success' ? 'Built and pushed' : `Build ${status}`,
                 summary: `[Workflow run](${runUrl})`,
               },
             });
 
   # -------------------------------------------------------------------
   # Retag on merge — no rebuild. Use buildx imagetools to retag the
-  # multi-arch manifest pushed by the PR build to :latest.
+  # multi-arch manifest pushed by the PR build.
   # -------------------------------------------------------------------
   retag-latest:
     name: Retag PR image as :latest (+ version tags) on merge
@@ -191,7 +281,7 @@ jobs:
       packages: write
     steps:
       - name: Checkout (for VERSION)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.merge_commit_sha }}
 
@@ -225,8 +315,6 @@ jobs:
           set -euo pipefail
           IMG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
           SRC="$IMG:sha-${{ steps.sha.outputs.short }}"
-          # All tags applied to the same multi-arch manifest in one shot.
-          # The sha-<short> tag is preserved because we do not delete it.
           docker buildx imagetools create \
             --tag "$IMG:latest" \
             --tag "$IMG:${{ steps.version.outputs.value }}" \
@@ -235,18 +323,33 @@ jobs:
             "$SRC"
 
   # -------------------------------------------------------------------
-  # Tagged release build — full semver matrix + latest.
+  # Tagged release build — full semver matrix + latest. Same per-arch
+  # native runner pattern as pr-build, then a merge job names the tags.
   # -------------------------------------------------------------------
   tag-build:
-    name: Build and push tagged release
+    name: tag-build ${{ matrix.platform }}
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
     steps:
+      - name: Prepare platform tag
+        id: plat
+        run: |
+          p="${{ matrix.platform }}"
+          echo "pair=${p//\//-}" >> "$GITHUB_OUTPUT"
+
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -254,8 +357,61 @@ jobs:
         id: version
         run: echo "value=$(cat VERSION)" >> "$GITHUB_OUTPUT"
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.version.outputs.value }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          build-args: |
+            IMAGE_VERSION=${{ steps.version.outputs.value }}
+            IMAGE_REVISION=${{ github.sha }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=tag-build-${{ steps.plat.outputs.pair }}
+          cache-to:   type=gha,scope=tag-build-${{ steps.plat.outputs.pair }},mode=max
+
+      - name: Export digest
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: tag-digests-${{ steps.plat.outputs.pair }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  tag-build-merge:
+    name: tag-build merge & tag
+    needs: tag-build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: tag-digests-*
+          merge-multiple: true
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v4
@@ -277,18 +433,18 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
             type=raw,value=latest
-          labels: |
-            org.opencontainers.image.version=${{ steps.version.outputs.value }}
-            org.opencontainers.image.revision=${{ github.sha }}
 
-      - name: Build and push (multi-arch)
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            IMAGE_VERSION=${{ steps.version.outputs.value }}
-            IMAGE_REVISION=${{ github.sha }}
+      - name: Create multi-arch manifest
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          set -euo pipefail
+          IMG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          tags=()
+          while IFS= read -r t; do
+            [[ -n "$t" ]] && tags+=( "-t" "$t" )
+          done <<< "${{ steps.meta.outputs.tags }}"
+          srcs=()
+          for d in *; do
+            srcs+=( "$IMG@sha256:$d" )
+          done
+          docker buildx imagetools create "${tags[@]}" "${srcs[@]}"

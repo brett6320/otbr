@@ -41,6 +41,12 @@ services:
       # - "/dev/ttyUSB0:/dev/ttyUSB0"
       # Stable by-id path is more robust when multiple USB devices are present:
       # - "/dev/serial/by-id/usb-Nordic_Semiconductor_nRF52840_Dongle-if00:/dev/ttyACM0"
+      # Rename on mount — host=/dev/ttyUSB0 becomes /dev/ttyUSB-otbr inside the
+      # container. Use this when RADIO_URL needs non-default UART params (e.g.
+      # Silabs EFR32 at 460800 baud, no HW flow control):
+      #   RADIO_URL=spinel+hdlc+uart:///dev/ttyUSB-otbr?uart-baudrate=460800&uart-flow-control=0
+      # No host udev rule is needed for the rename — Docker does it.
+      # - "/dev/ttyUSB0:/dev/ttyUSB-otbr"
 
       # Thread TUN device for the wpan0 interface.
       - "/dev/net/tun:/dev/net/tun"
