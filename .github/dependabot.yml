@@ -19,3 +19,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
+    ignore:
+      # We pin Ubuntu to an LTS release (24.04) on purpose — OTBR's
+      # script/bootstrap is only validated against LTS. Allow minor /
+      # patch bumps within 24.x, but skip major bumps. Re-evaluate
+      # manually when a new LTS lands.
+      - dependency-name: ubuntu
+        update-types:
+          - version-update:semver-major
