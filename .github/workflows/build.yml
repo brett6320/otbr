@@ -151,8 +151,10 @@ jobs:
           # Push only the manifest digest; the merge job names the tags.
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
           # Per-platform gha cache scope so amd64 and arm64 don't fight.
+          # ignore-error=true: cache write is best-effort. "failed to reserve cache"
+          # (quota or transient backend) must not fail the build.
           cache-from: type=gha,scope=pr-build-${{ steps.plat.outputs.pair }}
-          cache-to:   type=gha,scope=pr-build-${{ steps.plat.outputs.pair }},mode=max
+          cache-to:   type=gha,scope=pr-build-${{ steps.plat.outputs.pair }},mode=max,ignore-error=true
 
       - name: Export digest
         run: |
@@ -381,7 +383,7 @@ jobs:
             IMAGE_REVISION=${{ github.sha }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=tag-build-${{ steps.plat.outputs.pair }}
-          cache-to:   type=gha,scope=tag-build-${{ steps.plat.outputs.pair }},mode=max
+          cache-to:   type=gha,scope=tag-build-${{ steps.plat.outputs.pair }},mode=max,ignore-error=true
 
       - name: Export digest
         run: |
