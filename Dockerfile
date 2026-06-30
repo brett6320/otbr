@@ -5,7 +5,7 @@
 # Single-stage build on Ubuntu LTS. OTBR's bootstrap/setup scripts install
 # and configure system services (mDNS, dbus, etc.); a multi-stage split
 # tends to drop required runtime state, so we stay single-stage on purpose.
-FROM ubuntu:24.04
+FROM ubuntu:24.10
 
 # ---- Build-time configuration --------------------------------------------
 # Pin to a specific upstream ref. Upstream ot-br-posix does not cut regular
